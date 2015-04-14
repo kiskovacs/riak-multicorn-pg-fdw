@@ -1,0 +1,9 @@
+.DS_Store
+*.py[cod]
+*.log
+*.out
+*.swp
+.*.swp
+.noseids
+build
+riak-multicorn-pg-fdw.iml
