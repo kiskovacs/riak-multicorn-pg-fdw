@@ -1,11 +1,11 @@
 ## This is the implementation of the Multicorn ForeignDataWrapper class for Riak
 
-from collections import OrderedDict
-import json
-
+from contextlib import closing
+from PIL import Image
+from StringIO import StringIO
 from multicorn import ForeignDataWrapper
 from multicorn.utils import log_to_postgres, ERROR, WARNING, DEBUG
-
+from operatorFunctions import unknownOperatorException, getOperatorFunction
 import riak as r
 
 ## The Foreign Data Wrapper Class:
@@ -30,22 +30,69 @@ class RiakFDW(ForeignDataWrapper):
             log_to_postgres('Using Default port: 8087.', WARNING)
 
         if options.has_key('bucket'):
-            self.table = options['bucket']
+            self.bucket = options['bucket']
         else:
             log_to_postgres('bucket parameter is required.', ERROR)
 
 
         self.columns = columns
+        self.row_id_column = columns.keys()[0]
 
+    @property
+    def rowid_column(self):
+        """
+        Returns:
+            A column name which will act as a rowid column,
+            for delete/update operations.
+
+            One can think of it as a primary key.
+
+            This can be either an existing column name, or a made-up one.
+            This column name should be subsequently present in every
+            returned resultset.
+        """
+        return self.row_id_column
+
+    def connect(self):
+        # try to connect
+        try:
+            client = r.RiakClient(pb_port=self.port)
+            bucket = client.bucket(self.bucket)
+            client.set_decoder("image/jpeg", lambda data: Image.open(StringIO(data)))
+
+        except Exception, e:
+
+            log_to_postgres('Connection Falure:  %s' % e, ERROR)
+
+        return client, bucket
 
     # SQL SELECT:
     def execute(self, quals, columns):
 
-        log_to_postgres('Query Columns:  %s' % columns, DEBUG)
-        log_to_postgres('Query Filters:  %s' % quals, DEBUG)
+        log_to_postgres('Query Columns:  %s' % columns, WARNING)
+        log_to_postgres('Query Filters:  %s' % quals, WARNING)
 
-        return
- 
+        (client, bucket) = self.connect()
+        results = []
+        with closing(client.stream_keys(bucket)) as keys:
+            for key_list in keys:
+                line = {}
+                for key in key_list:
+                    line['id'] = 'id %s' % key
+                    line['data'] = 'data %s' % bucket.get(key).data
+                results.append(line)
+
+        for qual in quals:
+
+            try:
+                operatorFunction = getOperatorFunction(qual.operator)
+            except unknownOperatorException, e:
+                log_to_postgres(e, ERROR)
+
+            filter(lambda line: operatorFunction(line[qual.field_name], qual.value), results)
+
+        for line in results:
+            yield line
 
     # SQL INSERT:
     def insert(self, new_values):
@@ -74,20 +121,12 @@ class RiakFDW(ForeignDataWrapper):
 
             log_to_postgres('Update request requires old_values ID (PK).  Missing From:  %s' % old_values, ERROR)
 
-        # try to connect
-        try:
-            client = r.RiakClient(pb_port=self.port)
-            bucket = client.bucket(self.bucket)
-
-        except Exception, e:
-
-            log_to_postgres('Connection Falure:  %s' % e, ERROR)
+        (client, bucket) = self.connect()
 
 
         try:
 
-            fetched = bucket.get(old_values.id)
-            fetched.delete()
+            bucket.delete(old_values.id)
 
         except Exception, e:
 
