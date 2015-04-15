@@ -1,14 +1,21 @@
-## This is the implementation of the Multicorn ForeignDataWrapper class for Riak
+# Implementation of the Multicorn ForeignDataWrapper class for Riak
 
 from contextlib import closing
 from PIL import Image
 from StringIO import StringIO
 from multicorn import ForeignDataWrapper
-from multicorn.utils import log_to_postgres, ERROR, WARNING, DEBUG
-from operatorFunctions import unknownOperatorException, getOperatorFunction
+from multicorn.utils import log_to_postgres, ERROR, DEBUG
+from operatorFunctions import get_operator_function, UnknownOperatorException
 import riak as r
 
-## The Foreign Data Wrapper Class:
+
+def apply_filters(line, filters):
+    for func in filters:
+        if not func(line):
+            log_to_postgres('Line filtered out: %s' % line, DEBUG)
+            return False
+    return True
+
 class RiakFDW(ForeignDataWrapper):
 
     """
@@ -27,13 +34,12 @@ class RiakFDW(ForeignDataWrapper):
             self.port = options['port']
         else:
             self.port = '8087'
-            log_to_postgres('Using Default port: 8087.', WARNING)
+            log_to_postgres('Using Default port: 8087.')
 
         if options.has_key('bucket'):
             self.bucket = options['bucket']
         else:
             log_to_postgres('bucket parameter is required.', ERROR)
-
 
         self.columns = columns
         self.row_id_column = columns.keys()[0]
@@ -69,68 +75,71 @@ class RiakFDW(ForeignDataWrapper):
     # SQL SELECT:
     def execute(self, quals, columns):
 
-        log_to_postgres('Query Columns:  %s' % columns, WARNING)
-        log_to_postgres('Query Filters:  %s' % quals, WARNING)
+        log_to_postgres('Query Columns:  %s' % columns, DEBUG)
+        log_to_postgres('Query Filters:  %s' % quals, DEBUG)
 
         (client, bucket) = self.connect()
+        filters = []
+        for qual in quals:
+            try:
+                operator_function = get_operator_function(qual.operator)
+            except UnknownOperatorException, e:
+                log_to_postgres(e, ERROR)
+            filters.append(lambda x: operator_function(x[qual.field_name], qual.value))
+
         results = []
         with closing(client.stream_keys(bucket)) as keys:
             for key_list in keys:
                 line = {}
                 for key in key_list:
-                    line['id'] = 'id %s' % key
-                    line['data'] = 'data %s' % bucket.get(key).data
-                results.append(line)
+                    line['id'] = key
+                    line['data'] = bucket.get(key).data
+                if apply_filters(line, filters):
+                    results.append(line)
 
-        for qual in quals:
-
-            try:
-                operatorFunction = getOperatorFunction(qual.operator)
-            except unknownOperatorException, e:
-                log_to_postgres(e, ERROR)
-
-            filter(lambda line: operatorFunction(line[qual.field_name], qual.value), results)
-
-        for line in results:
-            yield line
+        return results
 
     # SQL INSERT:
-    def insert(self, new_values):
+    def insert(self, _value):
 
-        log_to_postgres('Insert Request - new values:  %s' % new_values, DEBUG)
+        log_to_postgres('Insert Request - new values:  %s' % _value, DEBUG)
 
-        return
-
-    # SQL UPDATE:
-    def update(self, old_values, new_values):
-
-        log_to_postgres('Update Request - new values:  %s' % new_values, DEBUG)
-
-        if not old_values.has_key('id'):
-
-             log_to_postgres('Update request requires old_values ID (PK).  Missing From:  %s' % old_values, ERROR)
-
-        return
-
-    # SQL DELETE
-    def delete(self, old_values):
-
-        log_to_postgres('Delete Request - old values:  %s' % old_values, DEBUG)
-
-        if not old_values.has_key('id'):
-
-            log_to_postgres('Update request requires old_values ID (PK).  Missing From:  %s' % old_values, ERROR)
+        if 'id' not in _value:
+            log_to_postgres('Insert request requires new_values ID (PK).  Missing From:  %s' % _value, ERROR)
 
         (client, bucket) = self.connect()
 
+        if 'file' in _value:
+            new_data = bucket.new_from_file(_value['id'], _value['file'])
+        else:
+            new_data = bucket.new(_value['id'], data=_value['data'])
+        new_data.store()
+        return
+
+    # SQL UPDATE:
+    def update(self, _key, _value):
+
+        log_to_postgres('Update Request - key:  %s' % _key, DEBUG)
+        log_to_postgres('Update Request - value:  %s' % _value, DEBUG)
+
+        (client, bucket) = self.connect()
+
+        updated_data = bucket.get(_key)
+        updated_data.data = _value['data']
+        updated_data.store()
+        return
+
+    # SQL DELETE
+    def delete(self, _key):
+
+        log_to_postgres('Delete Request - id:  %s' % _key, DEBUG)
+
+        (client, bucket) = self.connect()
 
         try:
-
-            bucket.delete(old_values.id)
-
-        except Exception, e:
-
-            log_to_postgres('Riak error:  %s' %e, ERROR)
+            bucket.delete(_key)
+        except Exception, ex:
+            log_to_postgres('Riak error:  %s' % ex, ERROR)
 
         return
 
