@@ -29,12 +29,22 @@ class RiakFDW(ForeignDataWrapper):
         log_to_postgres('options:  %s' % options, DEBUG)
         log_to_postgres('columns:  %s' % columns, DEBUG)
 
-
-        if options.has_key('port'):
-            self.port = options['port']
+        if options.has_key('nodes'):
+            nodes_option = options['nodes']
         else:
-            self.port = '8087'
-            log_to_postgres('Using Default port: 8087.')
+            nodes_option = '{http://127.0.0.1:8098,pbc://127.0.0.1:8087}'
+            log_to_postgres('Using Default host: 127.0.0.1 http_port:8098 pb_port:8087')
+
+        self.nodes = []
+        for parsed in map(lambda x: urlparse(x), nodes_option.split(',')):
+            host = parsed.netloc.split(':')[0]
+            if parsed.scheme == 'pbc':
+                self.nodes.append({'host':host, 'pb_port':parsed.port})
+            else:
+                self.nodes.append({'host':host, 'http_port':parsed.port})
+
+        self.client = r.RiakClient(nodes=self.nodes)
+        self.client.set_decoder("image/jpeg", lambda data: Image.open(StringIO(data)))
 
         if options.has_key('bucket'):
             self.bucket = options['bucket']
@@ -62,15 +72,12 @@ class RiakFDW(ForeignDataWrapper):
     def connect(self):
         # try to connect
         try:
-            client = r.RiakClient(pb_port=self.port)
-            bucket = client.bucket(self.bucket)
-            client.set_decoder("image/jpeg", lambda data: Image.open(StringIO(data)))
+            bucket = self.client.bucket(self.bucket)
 
         except Exception, e:
-
             log_to_postgres('Connection Falure:  %s' % e, ERROR)
 
-        return client, bucket
+        return self.client, bucket
 
     # SQL SELECT:
     def execute(self, quals, columns):
@@ -142,6 +149,3 @@ class RiakFDW(ForeignDataWrapper):
             log_to_postgres('Riak error:  %s' % ex, ERROR)
 
         return
-
-
-
