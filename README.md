@@ -2,9 +2,18 @@
 
 Multicorn based PostgreSQL Foreign Data Wrapper for Riak
 
+Debian dependecies install:
 ```sh
 $ sudo apt-get install python-dev libffi-dev libssl-dev
+```
 
+Red Hat dependencies install:
+```sh
+$ dnf install python-devel libffi-devel libss-devel protobuf-python
+```
+
+Installation:
+```sh
 $ sudo pip install riak
 
 $ sudo pgxn install multicorn
