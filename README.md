@@ -27,5 +27,9 @@ create extension multicorn;
 
 create server riak foreign data wrapper multicorn options (wrapper 'riak_fdw.riak_fdw.RiakFDW');
 
-create foreign table riak_medium_bucket (id varchar, data varchar) server riak options (bucket 'medium');
+create foreign table riak_medium_bucket (id varchar, data varchar) server riak options (bucket 'medium', nodes 'http://127.0.0.1:8098,pbc://127.0.0.1:8087');
+
+insert into riak_medium_bucket values ('first','first data');
+
+select * from riak_medium_bucket;
 ```
