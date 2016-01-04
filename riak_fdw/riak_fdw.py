@@ -6,6 +6,7 @@ from StringIO import StringIO
 from multicorn import ForeignDataWrapper
 from multicorn.utils import log_to_postgres, ERROR, DEBUG
 from operatorFunctions import get_operator_function, UnknownOperatorException
+from urlparse import urlparse
 import riak as r
 
 
@@ -32,7 +33,7 @@ class RiakFDW(ForeignDataWrapper):
         if options.has_key('nodes'):
             nodes_option = options['nodes']
         else:
-            nodes_option = '{http://127.0.0.1:8098,pbc://127.0.0.1:8087}'
+            nodes_option = 'http://127.0.0.1:8098,pbc://127.0.0.1:8087'
             log_to_postgres('Using Default host: 127.0.0.1 http_port:8098 pb_port:8087')
 
         self.nodes = []
